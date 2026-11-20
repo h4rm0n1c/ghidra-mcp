@@ -1,0 +1,126 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          ghidra-mcp-2
+# Required-Start:    $local_fs $network
+# Required-Stop:     $local_fs $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Isolated Ghidra MCP v2 development instance
+### END INIT INFO
+
+# This unit deliberately contains no process-name fallback.  A stale PID file
+# must never cause it to signal the original ghidra-mcp instance.
+set -eu
+
+NAME=ghidra-mcp-2
+RUN_AS=harri
+VENV_ROOT=/home/harri/.ghidra_mcp_venv_2
+VENV_PYTHON=$VENV_ROOT/bin/python
+SERVER_SCRIPT=$VENV_ROOT/ghidra_headless_server.py
+BRIDGE_SCRIPT=$VENV_ROOT/bridge_mcp_ghidra.py
+STATE_DIR=/home/harri/.local/state/$NAME
+INSTANCE_HOME=$STATE_DIR/home
+SERVER_PIDFILE=$STATE_DIR/server.pid
+BRIDGE_PIDFILE=$STATE_DIR/bridge.pid
+LOGFILE=/var/log/$NAME.log
+SERVER_PORT=8082
+BRIDGE_PORT=8083
+PROJECT_DIR=/home/harri/ghidra_projects_2
+PROJECT_NAME=GhidraMCP2
+DEFAULT_CATEGORY=Types
+
+export GHIDRA_INSTALL_DIR=/opt/ghidra_12.1_PUBLIC
+export GHIDRA_MCP_INSTANCE_NAME=$NAME
+export GHIDRA_MCP_PROJECT_DIR=$PROJECT_DIR
+export GHIDRA_MCP_PROJECT_NAME=$PROJECT_NAME
+export GHIDRA_MCP_DEFAULT_CATEGORY=$DEFAULT_CATEGORY
+export HOME=$INSTANCE_HOME
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Duser.home=$INSTANCE_HOME"
+
+prepare_dirs() {
+    install -d -o "$RUN_AS" -g "$RUN_AS" -m 0750 "$STATE_DIR" "$INSTANCE_HOME" "$PROJECT_DIR"
+    touch "$LOGFILE"
+    chown "$RUN_AS:$RUN_AS" "$LOGFILE"
+}
+
+pid_matches() {
+    pid=$1 script=$2 port=$3
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+    args=$(ps -p "$pid" -o args= 2>/dev/null || true)
+    # The Ghidra server's listener is --port; FastMCP's SSE listener is
+    # --mcp-port.  Verify both the owned script and its correct listener
+    # flag, rather than using a generic port/process-name heuristic.
+    case "$script" in
+        "$BRIDGE_SCRIPT") port_flag="--mcp-port" ;;
+        *) port_flag="--port" ;;
+    esac
+    case "$args" in
+        *"$script"*"$port_flag $port"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+start_one() {
+    label=$1 script=$2 port=$3 pidfile=$4 extra=$5
+    if [ -s "$pidfile" ] && pid_matches "$(cat "$pidfile")" "$script" "$port"; then
+        echo "$NAME-$label: already running (PID $(cat "$pidfile"))"
+        return
+    fi
+    rm -f "$pidfile"
+    echo -n "$NAME-$label: starting... "
+    su "$RUN_AS" -s /bin/sh -c "nohup '$VENV_PYTHON' '$script' $extra >> '$LOGFILE' 2>&1 < /dev/null & echo \$!" > "$pidfile"
+    if [ -s "$pidfile" ] && pid_matches "$(cat "$pidfile")" "$script" "$port"; then
+        echo "started (PID $(cat "$pidfile"))"
+    else
+        echo "failed"
+        rm -f "$pidfile"
+        return 1
+    fi
+}
+
+stop_one() {
+    label=$1 script=$2 port=$3 pidfile=$4
+    [ -s "$pidfile" ] || { echo "$NAME-$label: not running"; return; }
+    pid=$(cat "$pidfile")
+    if ! pid_matches "$pid" "$script" "$port"; then
+        echo "$NAME-$label: refusing stale or foreign PID $pid" >&2
+        rm -f "$pidfile"
+        return
+    fi
+    kill "$pid"
+    i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 10 ]; do sleep 1; i=$((i + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid"; fi
+    rm -f "$pidfile"
+    echo "$NAME-$label: stopped"
+}
+
+do_start() {
+    prepare_dirs
+    start_one server "$SERVER_SCRIPT" "$SERVER_PORT" "$SERVER_PIDFILE" "--port $SERVER_PORT --project-dir '$PROJECT_DIR' --project-name '$PROJECT_NAME' --create-project"
+    i=0
+    until curl -fsS "http://127.0.0.1:$SERVER_PORT/methods" >/dev/null 2>&1; do
+        i=$((i + 1)); [ "$i" -lt 30 ] || { echo "$NAME-server: readiness timed out" >&2; return 1; }; sleep 1
+    done
+    start_one bridge "$BRIDGE_SCRIPT" "$BRIDGE_PORT" "$BRIDGE_PIDFILE" "--ghidra-server http://127.0.0.1:$SERVER_PORT --transport sse --mcp-host 127.0.0.1 --mcp-port $BRIDGE_PORT"
+}
+
+do_stop() {
+    stop_one bridge "$BRIDGE_SCRIPT" "$BRIDGE_PORT" "$BRIDGE_PIDFILE"
+    stop_one server "$SERVER_SCRIPT" "$SERVER_PORT" "$SERVER_PIDFILE"
+}
+
+do_status() {
+    for row in "server:$SERVER_SCRIPT:$SERVER_PORT:$SERVER_PIDFILE" "bridge:$BRIDGE_SCRIPT:$BRIDGE_PORT:$BRIDGE_PIDFILE"; do
+        label=${row%%:*}; rest=${row#*:}; script=${rest%%:*}; rest=${rest#*:}; port=${rest%%:*}; pidfile=${rest#*:}
+        if [ -s "$pidfile" ] && pid_matches "$(cat "$pidfile")" "$script" "$port"; then echo "$NAME-$label (port $port): running"; else echo "$NAME-$label (port $port): stopped"; fi
+    done
+}
+
+case "${1:-}" in
+    start) do_start ;;
+    stop) do_stop ;;
+    restart) do_stop; do_start ;;
+    status) do_status ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac

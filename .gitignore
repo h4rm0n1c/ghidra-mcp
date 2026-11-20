@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+projects.json
+build/
+dist/
+.gradle/

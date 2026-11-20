@@ -1,0 +1,46 @@
+{
+  "ghidra_headless_server.py": {
+    "creatures_sha256": "06ecc44a8b03d30a12bd49c58f82bbc422bbd737e5ede05fc487850b78b11de8",
+    "flextalk_sha256": "70d97ac30b3ff5f2eca10550fa3d734a3a4223b4dc69f8e30c5acbaf7d4ad157",
+    "added_from_flextalk": [
+      "GhidraAPI._decompile_token_statement",
+      "GhidraAPI._instruction_record",
+      "GhidraAPI._instruction_encoded_values",
+      "GhidraAPI._symbol_for_decompile_token",
+      "GhidraAPI._find_symbol_source_instruction",
+      "GhidraAPI._instruction_reads_address",
+      "GhidraAPI._has_scalar_cast_before",
+      "GhidraAPI.verify_decompile_constants",
+      "GhidraAPI.search_function_disassembly",
+      "GhidraAPI.disassemble_range",
+      "GhidraAPI._parse_tool_integer",
+      "GhidraAPI.translate_subfield_mask",
+      "GhidraAPI.solve_struct_index",
+      "GhidraAPI.debug_compare_struct_lookup",
+      "GhidraAPI.list_call_fixups",
+      "GhidraAPI._do_list_call_fixups",
+      "GhidraAPI.set_call_fixup",
+      "GhidraAPI._do_set_call_fixup",
+      "GhidraAPI.set_calling_convention",
+      "GhidraAPI._do_set_calling_convention",
+      "GhidraAPI.delete_data_type",
+      "GhidraAPI._do_delete_data_type"
+    ]
+  },
+  "bridge_mcp_ghidra.py": {
+    "creatures_sha256": "d4074035ebff926fe7d900844e3ef8dee50af2702f37d9de375bc8565e243ab0",
+    "flextalk_sha256": "00856e42a874c9515701032bea5d33e8b5158b703afed1ecb5f326bf5bf6486e",
+    "added_from_flextalk": [
+      "verify_decompile_constants",
+      "search_function_disassembly",
+      "disassemble_range",
+      "list_call_fixups",
+      "set_call_fixup",
+      "set_calling_convention",
+      "debug_compare_struct_lookup",
+      "translate_subfield_mask",
+      "solve_struct_index",
+      "delete_data_type"
+    ]
+  }
+}

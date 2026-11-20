@@ -1,0 +1,121 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          ghidra-mcp
+# Required-Start:    $local_fs $network
+# Required-Stop:     $local_fs $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Ghidra MCP server + SSE bridge for headless RE
+# Description:       Runs Ghidra's JVM via PyGhidra, loads the VoxtalkRE
+#                    project, serves a REST API on port 8080, and starts
+#                    the MCP bridge in SSE mode on port 8081 so any
+#                    MCP-compatible client can use Ghidra tools.
+### END INIT INFO
+
+set -e
+
+NAME=ghidra-mcp
+VENV_PYTHON=/home/harri/.ghidra_mcp_venv/bin/python
+
+SERVER_SCRIPT=/home/harri/.ghidra_mcp_venv/ghidra_headless_server.py
+SERVER_PIDFILE=/home/harri/.ghidra_mcp_venv/server.pid
+SERVER_LOGFILE=/var/log/$NAME.log
+SERVER_PORT=8080
+
+BRIDGE_SCRIPT=/home/harri/.ghidra_mcp_venv/bridge_mcp_ghidra.py
+BRIDGE_PIDFILE=/home/harri/.ghidra_mcp_venv/bridge.pid
+BRIDGE_LOGFILE=/var/log/$NAME.log
+BRIDGE_PORT=8081
+
+export GHIDRA_INSTALL_DIR=/opt/ghidra_12.1_PUBLIC
+export HOME=/home/harri
+
+do_start () {
+    if [ -f "$SERVER_PIDFILE" ] && kill -0 $(cat "$SERVER_PIDFILE") 2>/dev/null; then
+        echo "$NAME-server: already running (PID $(cat $SERVER_PIDFILE))"
+    else
+        echo -n "$NAME-server: starting... "
+        su harri -c "nohup $VENV_PYTHON $SERVER_SCRIPT --port $SERVER_PORT >> $SERVER_LOGFILE 2>&1 & echo \$!" > "$SERVER_PIDFILE"
+        if [ -s "$SERVER_PIDFILE" ]; then
+            echo "started (PID $(cat $SERVER_PIDFILE))"
+        else
+            echo "failed"
+            rm -f "$SERVER_PIDFILE"
+            return 1
+        fi
+    fi
+
+    echo -n "$NAME-server: waiting for readiness... "
+    for i in $(seq 1 30); do
+        if curl -s http://127.0.0.1:$SERVER_PORT/methods >/dev/null 2>&1; then
+            echo "ready after ${i}s"
+            break
+        fi
+        if [ "$i" = 30 ]; then
+            echo "timed out"
+            return 1
+        fi
+        sleep 1
+    done
+
+    if [ -f "$BRIDGE_PIDFILE" ] && kill -0 $(cat "$BRIDGE_PIDFILE") 2>/dev/null; then
+        echo "$NAME-bridge: already running (PID $(cat $BRIDGE_PIDFILE))"
+    else
+        echo -n "$NAME-bridge: starting on port $BRIDGE_PORT (SSE)... "
+        su harri -c "nohup $VENV_PYTHON $BRIDGE_SCRIPT \
+            --ghidra-server http://127.0.0.1:$SERVER_PORT \
+            --transport sse \
+            --mcp-port $BRIDGE_PORT \
+            >> $BRIDGE_LOGFILE 2>&1 < /dev/null & echo \$!" > "$BRIDGE_PIDFILE"
+        if [ -s "$BRIDGE_PIDFILE" ]; then
+            echo "started (PID $(cat $BRIDGE_PIDFILE))"
+        else
+            echo "failed"
+            rm -f "$BRIDGE_PIDFILE"
+        fi
+    fi
+}
+
+do_stop () {
+    if [ -f "$BRIDGE_PIDFILE" ]; then
+        PID=$(cat "$BRIDGE_PIDFILE")
+        kill $PID 2>/dev/null || true
+        for i in 1 2 3 4 5; do sleep 1; kill -0 $PID 2>/dev/null || break; done
+        kill -9 $PID 2>/dev/null || true
+        rm -f "$BRIDGE_PIDFILE"
+        echo "$NAME-bridge: stopped"
+    else
+        pkill -f "bridge_mcp_ghidra" 2>/dev/null || true
+    fi
+
+    if [ -f "$SERVER_PIDFILE" ]; then
+        PID=$(cat "$SERVER_PIDFILE")
+        kill $PID 2>/dev/null || true
+        for i in 1 2 3 4 5; do sleep 1; kill -0 $PID 2>/dev/null || break; done
+        kill -9 $PID 2>/dev/null || true
+        rm -f "$SERVER_PIDFILE"
+        echo "$NAME-server: stopped"
+    else
+        pkill -f "ghidra_headless_server" 2>/dev/null || true
+    fi
+}
+
+do_status () {
+    local s="stopped" b="stopped"
+    [ -f "$SERVER_PIDFILE" ] && kill -0 $(cat "$SERVER_PIDFILE") 2>/dev/null && s="running (PID $(cat $SERVER_PIDFILE))"
+    [ -f "$BRIDGE_PIDFILE" ] && kill -0 $(cat "$BRIDGE_PIDFILE") 2>/dev/null && b="running (PID $(cat $BRIDGE_PIDFILE))"
+    echo "$NAME-server (port $SERVER_PORT): $s"
+    echo "$NAME-bridge (port $BRIDGE_PORT, SSE): $b"
+    [ "$s" = "stopped" ] && return 1
+}
+
+case "$1" in
+    start)   do_start ;;
+    stop)    do_stop ;;
+    restart) do_stop; sleep 1; do_start ;;
+    status)  do_status ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,22 @@
+{
+  "_comment": "Ghidra projects this server can open. Keys are the names the switch_project tool takes. dir/name locate the project (<dir>/<name>.gpr). default_program is opened on first switch. scripts is a GhidraScript collection run_script can run (numbered stage folders run in order). import_roots limits import_program to files below these directories. create makes the project on first open.",
+  "default": "example",
+  "projects": {
+    "example": {
+      "description": "Example project",
+      "dir": "/path/to/ghidra_projects",
+      "name": "MyProject",
+      "default_program": "/target.exe"
+    },
+    "scratch": {
+      "description": "Created on first open; imports limited to one folder",
+      "dir": "/path/to/scratch/ghidra",
+      "name": "scratch",
+      "create": true,
+      "import_roots": [
+        "/path/to/scratch/reference"
+      ],
+      "scripts": "/path/to/scratch/ghidra-scripts"
+    }
+  }
+}
